@@ -1,6 +1,9 @@
 # violet_svg
 https://www.youtube.com/watch?v=jFKWVt8-9J0
 
+# Install
+pip3 install git+https://github.com/wmetcalf/violet_svg.git
+
 # Usage
 
 ```

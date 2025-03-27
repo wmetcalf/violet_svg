@@ -1,0 +1,715 @@
+# violet_svg/violet_svg.py
+import os
+import sys
+import warnings
+import base64
+import copy
+import json
+import hashlib
+import logging
+import regex
+from collections import Counter
+
+# We'll prefer re2 if installed, otherwise fallback to re
+try:
+    import re2 as re
+except ImportError:
+    import re
+
+import magic
+import imagehash
+from PIL import Image
+from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
+
+logger = logging.getLogger(__name__)
+
+regex_is_awesome = {}
+
+regex_is_awesome["http_base64_in_script"] = re.compile(
+    r"\b(?:h(?:0(?:V(?:F(?:B[Tz]O|A6)|H(?:B[Tz]O|A6))|d(?:F(?:B[Tz]O|A6)|H(?:B[Tz]O|A6)))"
+    r"|U(?:V(?:F(?:B[Tz]O|A6)|H(?:B[Tz]O|A6))|d(?:F(?:B[Tz]O|A6)|H(?:B[Tz]O|A6))))"
+    r"|S(?:FR(?:0(?:U(?:[FH]M6|D)|c(?:[FH]M6|D))|U(?:U(?:[FH]M6|D)|c(?:[FH]M6|D)))"
+    r"|HR(?:0(?:U(?:[FH]M6|D)|c(?:[FH]M6|D))|U(?:U(?:[FH]M6|D)|c(?:[FH]M6|D))))"
+    r"|a(?:FR(?:0(?:U(?:[FH]M6|D)|c(?:[FH]M6|D))|U(?:U(?:[FH]M6|D)|c(?:[FH]M6|D)))"
+    r"|HR(?:0(?:U(?:[FH]M6|D)|c(?:[FH]M6|D))|U(?:U(?:[FH]M6|D)|c(?:[FH]M6|D))))"
+    r"|I(?:V(?:FR(?:Q(?:[Uc]z|O)|w(?:[Uc]z|O))|HR(?:Q(?:[Uc]z|O)|w(?:[Uc]z|O)))"
+    r"|d(?:FR(?:Q(?:[Uc]z|O)|w(?:[Uc]z|O))|HR(?:Q(?:[Uc]z|O)|w(?:[Uc]z|O))))"
+    r"|o(?:V(?:FR(?:Q(?:[Uc]z|O)|w(?:[Uc]z|O))|HR(?:Q(?:[Uc]z|O)|w(?:[Uc]z|O)))"
+    r"|d(?:FR(?:Q(?:[Uc]z|O)|w(?:[Uc]z|O))|HR(?:Q(?:[Uc]z|O)|w(?:[Uc]z|O)))))"
+)
+regex_is_awesome["eval"] = re.compile(r"\beval\b", re.I)
+regex_is_awesome["preventdefault"] = re.compile(r"(?:\x2e|\b)preventDefault\b", re.I)
+regex_is_awesome["fromcharcode"] = re.compile(r"(?:\x2e|\b)fromCharCode\b", re.I)
+regex_is_awesome["charcodeat"] = re.compile(r"(?:\x2e|\b)charCodeAt\b", re.I)
+regex_is_awesome["replace"] = re.compile(r"(?:\x2e|\b)replace\b", re.I)
+regex_is_awesome["concat"] = re.compile(r"(?:\x2e|\b)concat\b", re.I)
+regex_is_awesome["long_hex_string"] = re.compile(r"(?P<q>[\x22\x27`])[A-F0-9]{40,}(?P=q)", re.I)
+regex_is_awesome["long_b64_string"] = re.compile(
+    r"[\x22\x27`](?=[A-Za-z0-9+/]{0,80}(?:[a-z][0-9][A-Z]|[A-Z][0-9][a-z]))(?=[A-Za-z0-9+/]{0,80}[a-z][A-Z][a-z])(?=[A-Za-z0-9+/]{0,80}[A-Za-z0-9]\/)(?=[A-Za-z0-9+/]{0,80}[A-Za-z0-9]\+)(?:[A-Za-z0-9+/]{4}){20,}(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?[\x22\x27`]"
+)
+regex_is_awesome["two_for_one_match"] = re.compile(r"\.match\(\/\.\{1,2\}\/g", re.I)
+regex_is_awesome["split"] = re.compile(r"(?:\x2e|\b)split\b", re.I)
+regex_is_awesome["atob"] = re.compile(r"\batob\b", re.I)
+regex_is_awesome["btoa"] = re.compile(r"\bbtoa\b", re.I)
+regex_is_awesome["unescape"] = re.compile(r"\bunescape\b", re.I)
+regex_is_awesome["escape"] = re.compile(r"\bescape\b", re.I)
+regex_is_awesome["decodeuri"] = re.compile(r"\bdecodeURI\b", re.I)
+regex_is_awesome["encodeuri"] = re.compile(r"\bencodeURI\b", re.I)
+regex_is_awesome["decodeuricomponent"] = re.compile(r"\bdecodeURIComponent\b", re.I)
+regex_is_awesome["encodeuricomponent"] = re.compile(r"\bencodeURIComponent\b", re.I)
+regex_is_awesome["document_write"] = re.compile(r"\bdocument\s*\.\s*write\b", re.I | re.S)
+regex_is_awesome["document_writeln"] = re.compile(r"\bdocument\s*\.\s*writeln\b", re.I | re.S)
+regex_is_awesome["document_open"] = re.compile(r"\bdocument\s*\.\s*open\b", re.I | re.S)
+regex_is_awesome["document_createelement"] = re.compile(r"\bdocument\s*\.\s*createElement\b", re.I | re.S)
+regex_is_awesome["window_location"] = re.compile(r"\bwindow\s*\.\s*location\b", re.I | re.S)
+regex_is_awesome["contextmenu"] = re.compile(r"\bcontextmenu\b", re.I)
+regex_is_awesome["ctrlkey"] = re.compile(r"(?:\x2e|\b)ctrlKey\b", re.I)
+regex_is_awesome["shiftkey"] = re.compile(r"(?:\x2e|\b)shiftKey\b", re.I)
+regex_is_awesome["altkey"] = re.compile(r"(?:\x2e|\b)altKey\b", re.I)
+regex_is_awesome["metakey"] = re.compile(r"(?:\x2e|\b)metaKey\b", re.I)
+regex_is_awesome["keycode"] = re.compile(r"(?:\x2e|\b)keyCode\b", re.I)
+regex_is_awesome["magic85"] = re.compile(r"===\s*85\b", re.I)
+regex_is_awesome["magic123"] = re.compile(r"===\s*123\b", re.I)
+regex_is_awesome["magic73"] = re.compile(r"===\s*73\b", re.I)
+regex_is_awesome["magic74"] = re.compile(r"===\s*74\b", re.I)
+regex_is_awesome["join"] = re.compile(r"(?:\x2e|\b)join\b", re.I)
+regex_is_awesome["map"] = re.compile(r"(?:\x2e|\b)map\b", re.I)
+regex_is_awesome["filter"] = re.compile(r"(?:\x2e|\b)filter\b", re.I)
+regex_is_awesome["reduce"] = re.compile(r"(?:\x2e|\b)reduce\b", re.I)
+regex_is_awesome["slice"] = re.compile(r"(?:\x2e|\b)slice\b", re.I)
+regex_is_awesome["domcontentloaded"] = re.compile(r"domcontentloaded", re.I)
+regex_is_awesome["createelementns"] = re.compile(r"createelementns", re.I)
+regex_is_awesome["blob"] = re.compile(r"new\s*blob", re.I | re.S)
+regex_is_awesome["click"] = re.compile(r"(?:\x2e|\b)click\b", re.I)
+regex_is_awesome["appendchild"] = re.compile(r"(?:\x2e|\b)appendchild\b", re.I)
+regex_is_awesome["createobjecturl"] = re.compile(r"(?:\x2e|\b)createobjecturl\b", re.I)
+regex_is_awesome["revokeobjecturl"] = re.compile(r"(?:\x2e|\b)revokeobjecturl\b", re.I)
+regex_is_awesome["insertbefore"] = re.compile(r"(?:\x2e|\b)insertbefore\b", re.I)
+regex_is_awesome["removechild"] = re.compile(r"(?:\x2e|\b)removechild\b", re.I)
+regex_is_awesome["addeventlistener"] = re.compile(r"(?:\x2e|\b)addeventlistener\b", re.I)
+regex_is_awesome["clipboardwritetext"] = re.compile(r"clipboard\s*\.\s*writetext", re.I | re.S)
+data_url_pattern = re.compile(r"^data:([^;]+)?(;[^,]+)?,(.*)$", re.IGNORECASE)
+cdata_tag = re.compile(r"(?is)^\s*\<\!\[CDATA\[")
+cdata_tag_end = re.compile(r"(?is)\]\]\>\s*$")
+
+SVG_ELEMENT_CATEGORIES = {
+    "structural": {"svg", "g", "defs", "symbol", "use", "image", "switch", "marker", "a"},
+    "shapes": {"rect", "circle", "ellipse", "line", "polyline", "polygon", "path"},
+    "descriptive": {"desc", "title", "metadata"},
+    "text": {"text", "tspan", "textpath", "tref"},
+    "gradient_and_paint": {"lineargradient", "radialgradient", "stop", "pattern", "mesh", "hatch"},
+    "filter_and_masking": {
+        "clippath",
+        "mask",
+        "filter",
+        "feblend",
+        "fecolormatrix",
+        "fecomponenttransfer",
+        "fecomposite",
+        "feconvolvematrix",
+        "fediffuselighting",
+        "fedisplacementmap",
+        "fedropshadow",
+        "feflood",
+        "fefunca",
+        "fefuncb",
+        "fefuncg",
+        "fefuncr",
+        "fegaussianblur",
+        "feimage",
+        "femerge",
+        "femergenode",
+        "femorphology",
+        "feoffset",
+        "fespecularlighting",
+        "fetile",
+        "feturbulence",
+        "color-profile",
+    },
+    "animation": {"animate", "animatetransform", "animatemotion", "set", "mpath", "animatecolor"},
+    "other": {"foreignobject", "script", "style", "solidcolor"},
+}
+
+SVG_ATTRIBUTE_CATEGORIES = {
+    "core_global": {"id", "xml:base", "xml:lang", "xml:space", "tabindex", "xmlns", "xmlns:xlink"},
+    "events": {
+        "onabort",
+        "onauxclick",
+        "onblur",
+        "oncancel",
+        "oncanplay",
+        "oncanplaythrough",
+        "onchange",
+        "onclick",
+        "onclose",
+        "oncontextmenu",
+        "oncopy",
+        "oncut",
+        "ondblclick",
+        "ondrag",
+        "ondragend",
+        "ondragenter",
+        "ondragleave",
+        "ondragover",
+        "ondragstart",
+        "ondrop",
+        "ondurationchange",
+        "onemptied",
+        "onended",
+        "onerror",
+        "onfocus",
+        "onfocusin",
+        "onfocusout",
+        "onformdata",
+        "oninput",
+        "oninvalid",
+        "onkeydown",
+        "onkeypress",
+        "onkeyup",
+        "onload",
+        "onloadeddata",
+        "onloadedmetadata",
+        "onloadstart",
+        "onmousedown",
+        "onmouseenter",
+        "onmouseleave",
+        "onmousemove",
+        "onmouseout",
+        "onmouseover",
+        "onmouseup",
+        "onpaste",
+        "onpause",
+        "onplay",
+        "onplaying",
+        "onpointercancel",
+        "onpointerdown",
+        "onpointerenter",
+        "onpointerleave",
+        "onpointermove",
+        "onpointerout",
+        "onpointerover",
+        "onpointerrawupdate",
+        "onpointerup",
+        "onratechange",
+        "onreset",
+        "onresize",
+        "onscroll",
+        "onseeked",
+        "onseeking",
+        "onselect",
+        "onsort",
+        "onstalled",
+        "onsubmit",
+        "onsuspend",
+        "ontimeupdate",
+        "ontoggle",
+        "onvolumechange",
+        "onwaiting",
+        "onwheel",
+        "ontouchstart",
+        "ontouchend",
+        "ontouchmove",
+        "ontouchcancel",
+        "ongotpointercapture",
+        "onlostpointercapture",
+        "onbegin",
+        "onrepeat",
+        "onend",
+    },
+    "presentation": {
+        "class",
+        "style",
+        "fill",
+        "fill-opacity",
+        "fill-rule",
+        "stroke",
+        "stroke-opacity",
+        "stroke-width",
+        "stroke-linecap",
+        "stroke-linejoin",
+        "stroke-miterlimit",
+        "stroke-dasharray",
+        "stroke-dashoffset",
+        "color",
+        "color-interpolation",
+        "color-interpolation-filters",
+        "opacity",
+        "display",
+        "visibility",
+        "pointer-events",
+        "shape-rendering",
+        "text-rendering",
+        "image-rendering",
+        "clip",
+        "clip-rule",
+    },
+    "coordinate_geometry": {"x", "y", "dx", "dy", "x1", "y1", "x2", "y2", "width", "height", "rx", "ry", "cx", "cy", "r", "d", "points"},
+    "transform_coordinate": {"transform", "viewbox", "preserveaspectratio"},
+    "text_specific": {
+        "font-family",
+        "font-size",
+        "font-weight",
+        "font-style",
+        "text-anchor",
+        "letter-spacing",
+        "word-spacing",
+        "dominant-baseline",
+        "alignment-baseline",
+        "rotate",
+        "textlength",
+        "lengthadjust",
+    },
+    "linking": {"href", "xlink:href", "target", "xlink:type", "xlink:title", "xlink:show", "xlink:actuate"},
+    "animation": {
+        "attributename",
+        "attributetype",
+        "begin",
+        "dur",
+        "end",
+        "repeatcount",
+        "repeatdur",
+        "fill",
+        "restart",
+        "calcmode",
+        "keytimes",
+        "keysplines",
+        "from",
+        "to",
+        "by",
+        "values",
+    },
+    "filter_masking": {
+        "filter",
+        "mask",
+        "clip-path",
+        "clip-rule",
+        "filterunits",
+        "primitiveunits",
+        "filterres",
+        "in",
+        "in2",
+        "result",
+        "stddeviation",
+        "flood-color",
+        "flood-opacity",
+        "surfacescale",
+        "specularconstant",
+        "specularexponent",
+        "xchannelselector",
+        "ychannelselector",
+    },
+    "gradient_pattern": {
+        "gradientunits",
+        "gradienttransform",
+        "spreadmethod",
+        "fx",
+        "fy",
+        "patternunits",
+        "patterntransform",
+        "patterncontentunits",
+        "offset",
+        "stop-color",
+        "stop-opacity",
+    },
+    "conditional_processing": {"externalresourcesrequired", "requiredfeatures", "requiredextensions", "systemlanguage"},
+}
+
+
+data_url_pattern = re.compile(r"^data:([^;]+)?(;[^,]+)?,(.*)$", re.IGNORECASE)
+cdata_tag = re.compile(r"(?is)^\s*\<\!\[CDATA\[")
+cdata_tag_end = re.compile(r"(?is)\]\]\>\s*$")
+invisible_chars_re = regex.compile(r"[\p{Cf}\uFFA0\u3164]+")
+wide_svg_tag_re = re.compile(rb"<\x00?s\x00?v\x00?g", re.I)
+
+
+def log_invisible_codepoints(text):
+    """Collect invisible Unicode codepoints from text."""
+    flags = []
+    for match in invisible_chars_re.finditer(text):
+        for ch in match.group():
+            hex_value = f"{ord(ch):04X}"
+            flags.append(f"svg_unicode_invisible_{hex_value}")
+    return flags
+
+
+def compress_invisible_flags(flags_list):
+    """Summarize invisible char flags."""
+    c = Counter(flags_list)
+    unique_flags = sorted(c.keys())
+    return unique_flags, dict(c)
+
+
+def hash_list(strings):
+    """Produce a SHA256 over a list of strings."""
+    joined = "\n".join(strings)
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()
+
+
+def flag_single_script_no_others(soup):
+    """Check if there's exactly one <script> and no other elements besides <svg>."""
+    scripts = soup.find_all("script")
+    script_count = len(scripts)
+    all_elems = soup.find_all()
+    other_elems = [t for t in all_elems if t.name and t.name.lower() not in ("script", "svg")]
+    return script_count > 0 and len(other_elems) == 0
+
+
+def check_fullscreen_foreignobject(soup):
+    """Return True if <foreignObject> is 100% width+height."""
+    foreign_objects = soup.find_all("foreignobject")
+    for fo in foreign_objects:
+        w = (fo.get("width", "") or "").strip().lower()
+        h = (fo.get("height", "") or "").strip().lower()
+        if w == "100%" and h == "100%":
+            return True
+        style_attr = (fo.get("style", "") or "").lower()
+        if "width:100" in style_attr and "height:100" in style_attr:
+            return True
+    return False
+
+
+def check_iframe_in_foreignobject(soup):
+    """Return True if <iframe> is found inside a <foreignObject>."""
+    foreign_objects = soup.find_all("foreignobject")
+    for fo in foreign_objects:
+        if fo.find("iframe"):
+            return True
+    return False
+
+
+class SVGAnalyzer:
+
+    def __init__(self):
+        self.input_path = None
+        self.output_dir = None
+        self.disable_image_hashes = False
+        self.raw = False
+
+    def analyze_file(self, input_path, output_dir, disable_image_hashes=False, raw=False):
+
+        self.input_path = input_path
+        self.output_dir = output_dir
+        self.disable_image_hashes = disable_image_hashes
+        self.raw = raw
+
+        os.makedirs(self.output_dir, exist_ok=True)
+
+        with open(self.input_path, "rb") as f:
+            raw_bytes = f.read()
+            match = wide_svg_tag_re.search(raw_bytes)
+            if match:
+                logger.info(f"found potential wide <svg> tag: {match.group(0)!r}")
+                if match.group(0) == b"<\x00s\x00v\x00g":
+                    logger.info("found null bytes in svg tag, removing them")
+                    raw_bytes = raw_bytes.replace(b"\x00", b"")
+
+        content = raw_bytes.decode("utf-8", errors="ignore")
+        results = self.run_analysis(content)
+        original_urls = results["extracted_data"]["urls"]
+        data_urls_info, final_urls = self.extract_and_store_data_urls(original_urls)
+        results["extracted_data"]["urls"] = final_urls
+        results["data_urls"] = data_urls_info
+
+        if self.raw:
+            results["raw_content"] = content
+
+        return results
+
+    def run_analysis(self, content):
+        raw_bytes = content.encode("utf-8", errors="ignore")
+        is_svg_wide = bool(wide_svg_tag_re.search(raw_bytes))
+        with warnings.catch_warnings():
+            warnings.filterwarnings("error", category=XMLParsedAsHTMLWarning)
+            try:
+                soup = BeautifulSoup(content, "html.parser")
+                if not soup.find("svg"):
+                    soup = BeautifulSoup(content, "xml")
+            except XMLParsedAsHTMLWarning:
+                soup = BeautifulSoup(content, "xml")
+
+        invisible_flags = log_invisible_codepoints(content)
+        unique_flags, counts = compress_invisible_flags(invisible_flags)
+        found_invisible_chars = bool(invisible_flags)
+        normalized_content = invisible_chars_re.sub("", content)
+        total_invisible_chars = sum(counts.values())
+        invisible_flags_hash = hash_list(sorted(invisible_flags))
+        only_script = flag_single_script_no_others(soup)
+        has_fullscreen_fo = check_fullscreen_foreignobject(soup)
+        has_iframe_fo = check_iframe_in_foreignobject(soup)
+        detail_results = self._analyze_svg_security(soup)
+        has_base64_dataurl_script_src = detail_results["has_base64_dataurl_script_src"]
+        found_script = bool(detail_results["extracted_data"]["scripts"])
+        script_features = {}
+        if found_script:
+            for name, rgx_pattern in regex_is_awesome.items():
+                script_features[name] = False
+                for scode in detail_results["extracted_data"]["scripts"]:
+                    if rgx_pattern.search(scode):
+                        script_features[name] = True
+                        break
+
+        lines_for_security = [
+            f"HAS_SCRIPT={int(found_script)}",
+            f"HAS_BASE64_DATAURL_SCRIPT_SRC={int(has_base64_dataurl_script_src)}",
+            f"STRUCT_COMPOSITE={detail_results['composite_hash']}",
+            f"WIDE_SVG_TAG={int(is_svg_wide)}",
+            f"INVISIBLE_PRESENT={int(found_invisible_chars)}",
+            f"INVISIBLE_FLAGS_HASH={invisible_flags_hash}",
+            f"ONLY_SCRIPT={int(only_script)}",
+            f"FULLSCREEN_FOREIGNOBJECT={int(has_fullscreen_fo)}",
+            f"IFRAME_IN_FOREIGNOBJECT={int(has_iframe_fo)}",
+        ]
+        security_input = "\n".join(lines_for_security)
+        security_composite_hash = hashlib.sha256(security_input.encode("utf-8")).hexdigest()
+
+        svg_w = detail_results["svg_metadata"].get("width", "unknown")
+        svg_h = detail_results["svg_metadata"].get("height", "unknown")
+        lines_for_security_dims = lines_for_security + [f"SVG_WIDTH={svg_w}", f"SVG_HEIGHT={svg_h}"]
+        security_composite_hash_dimensions = hashlib.sha256("\n".join(lines_for_security_dims).encode("utf-8")).hexdigest()
+
+        lines_for_security_script_features = lines_for_security + [f"SCRIPT_FEATURES={script_features}"]
+        security_composite_hash_script_features_v1 = hashlib.sha256("\n".join(lines_for_security_script_features).encode("utf-8")).hexdigest()
+
+        results = {
+            "has_script": found_script,
+            "svg_metadata": detail_results["svg_metadata"],
+            "element_presence": detail_results["element_presence"],
+            "element_counts": detail_results["element_counts"],
+            "attribute_presence": detail_results["attribute_presence"],
+            "attribute_counts": detail_results["attribute_counts"],
+            "presence_hashes": detail_results["presence_hashes"],
+            "count_hashes": detail_results["count_hashes"],
+            "composite_hash": detail_results["composite_hash"],
+            "is_svg_wide": is_svg_wide,
+            "found_invisible_chars": found_invisible_chars,
+            "normalized_content_length": len(normalized_content),
+            "original_content_length": len(content),
+            "invisible_flags_hash": invisible_flags_hash,
+            "invisible_flags_unique": unique_flags,
+            "invisible_flags_counts": counts,
+            "invisible_chars_total": total_invisible_chars,
+            "only_script": only_script,
+            "has_fullscreen_foreignobject": has_fullscreen_fo,
+            "has_iframe_in_foreignobject": has_iframe_fo,
+            "has_script": found_script,
+            "has_base64_dataurl_script_src": has_base64_dataurl_script_src,
+            "script_features": script_features,
+            "security_composite_hash": security_composite_hash,
+            "security_composite_hash_dimensions": security_composite_hash_dimensions,
+            "security_composite_hash_script_features_v1": security_composite_hash_script_features_v1,
+            "extracted_data": detail_results["extracted_data"],
+        }
+
+        return results
+
+    def _analyze_svg_security(self, soup):
+        svg_metadata = {}
+        text_content = []
+        extracted_urls = []
+        extracted_scripts = []
+
+        has_base64_dataurl_script_src = False
+
+        root_svg = soup.find("svg")
+        if root_svg:
+            svg_metadata["width"] = root_svg.get("width")
+            svg_metadata["height"] = root_svg.get("height")
+            svg_metadata["viewBox"] = root_svg.get("viewbox")
+            svg_metadata["preserveAspectRatio"] = root_svg.get("preserveaspectratio")
+            svg_metadata["version"] = root_svg.get("version")
+            svg_metadata["baseProfile"] = root_svg.get("baseprofile")
+
+        for svg_el in soup.find_all("svg"):
+            for txt_node in svg_el.find_all("text"):
+                txt_val = txt_node.get_text(" ", strip=True)
+                if txt_val:
+                    text_content.append(txt_val)
+
+        element_presence = {cat: set() for cat in SVG_ELEMENT_CATEGORIES}
+        element_presence["unknown"] = set()
+        element_counts = {cat: Counter() for cat in SVG_ELEMENT_CATEGORIES}
+        element_counts["unknown"] = Counter()
+
+        attribute_presence = {cat: set() for cat in SVG_ATTRIBUTE_CATEGORIES}
+        attribute_presence["unknown"] = set()
+        attribute_counts = {cat: Counter() for cat in SVG_ATTRIBUTE_CATEGORIES}
+        attribute_counts["unknown"] = Counter()
+
+        elem_to_cat = {}
+        for cat, elems in SVG_ELEMENT_CATEGORIES.items():
+            for e in elems:
+                elem_to_cat[e.lower()] = cat
+
+        attr_to_cat = {}
+        for cat, attrs in SVG_ATTRIBUTE_CATEGORIES.items():
+            for a in attrs:
+                attr_to_cat[a.lower()] = cat
+
+        possible_url_attrs = {"href", "xlink:href", "src", "xlink:src"}
+
+        for tag in soup.find_all():
+            tag_name = (tag.name or "").lower()
+            cat = elem_to_cat.get(tag_name, "unknown")
+            element_presence[cat].add(tag_name)
+            element_counts[cat][tag_name] += 1
+
+            if tag_name == "script":
+                script_text = tag.get_text(strip=True)
+                if script_text:
+                    script_text = cdata_tag.sub("", script_text)
+                    script_text = cdata_tag_end.sub("", script_text)
+                    extracted_scripts.append(script_text)
+
+                if "src" in tag.attrs:
+                    script_src = tag["src"]
+                    extracted_urls.append(script_src)
+
+                    m = data_url_pattern.match(script_src.strip())
+                    if m:
+                        rest_params = m.group(2) or ""
+                        data_part = m.group(3)
+                        if "base64" in rest_params.lower():
+                            has_base64_dataurl_script_src = True
+                            try:
+                                raw_bytes = base64.b64decode(data_part, validate=True)
+                            except Exception:
+                                raw_bytes = data_part.encode("utf-8", errors="replace")
+                            try:
+                                if b"\x00" in raw_bytes:
+                                    raw_bytes = base64.b64decode(raw_bytes).decode("UTF-16")
+                            except:
+                                pass
+                            script_decoded = raw_bytes.decode("utf-8", errors="replace")
+                            extracted_scripts.append(script_decoded)
+
+            for full_attr_name, attr_value in tag.attrs.items():
+                unified_attr = full_attr_name.split(":", 1)[-1].lower()
+                attr_cat = attr_to_cat.get(unified_attr, "unknown")
+                attribute_presence[attr_cat].add(unified_attr)
+                attribute_counts[attr_cat][unified_attr] += 1
+
+                if unified_attr in possible_url_attrs and tag_name != "script":
+                    extracted_urls.append(attr_value)
+
+                if unified_attr == "style":
+                    found_in_style = re.findall(r'url\s*\(\s*["\']?([^"\')]+)', attr_value, flags=re.IGNORECASE)
+                    extracted_urls.extend(found_in_style)
+
+        for style_tag in soup.find_all("style"):
+            style_content = style_tag.get_text()
+            found_block = re.findall(r'url\s*\(\s*["\']?([^"\')]+)', style_content, flags=re.IGNORECASE)
+            extracted_urls.extend(found_block)
+
+        presence_hashes = {}
+        count_hashes = {}
+
+        for cat, pres_set in element_presence.items():
+            sorted_presence = sorted(pres_set)
+            presence_hashes[f"element:{cat}:presence"] = hash_list(sorted_presence)
+
+            cnt = element_counts[cat]
+            sorted_counts = [f"{k}:{v}" for k, v in sorted(cnt.items())]
+            count_hashes[f"element:{cat}:count"] = hash_list(sorted_counts)
+
+        for cat, pres_set in attribute_presence.items():
+            sorted_presence = sorted(pres_set)
+            presence_hashes[f"attribute:{cat}:presence"] = hash_list(sorted_presence)
+
+            cnt = attribute_counts[cat]
+            sorted_counts = [f"{k}:{v}" for k, v in sorted(cnt.items())]
+            count_hashes[f"attribute:{cat}:count"] = hash_list(sorted_counts)
+
+        all_keys = sorted(list(presence_hashes.keys()) + list(count_hashes.keys()))
+        composite_input = []
+        for key in all_keys:
+            if key in presence_hashes:
+                composite_input.append(key + "=" + presence_hashes[key])
+            else:
+                composite_input.append(key + "=" + count_hashes[key])
+        composite_str = "\n".join(composite_input)
+        composite_hash = hashlib.sha256(composite_str.encode("utf-8")).hexdigest()
+
+        return {
+            "svg_metadata": svg_metadata,
+            "element_presence": {k: sorted(list(v)) for k, v in element_presence.items()},
+            "element_counts": {k: dict(v) for k, v in element_counts.items()},
+            "attribute_presence": {k: sorted(list(v)) for k, v in attribute_presence.items()},
+            "attribute_counts": {k: dict(v) for k, v in attribute_counts.items()},
+            "presence_hashes": presence_hashes,
+            "count_hashes": count_hashes,
+            "composite_hash": composite_hash,
+            "has_base64_dataurl_script_src": has_base64_dataurl_script_src,
+            "extracted_data": {
+                "urls": extracted_urls,
+                "scripts": extracted_scripts,
+                "text": text_content,
+            },
+        }
+
+    def extract_and_store_data_urls(self, url_list):
+        data_url_entries = []
+        kept_urls = []
+
+        for url in url_list:
+            match = data_url_pattern.match(url.strip())
+            if not match:
+                kept_urls.append(url)
+                continue
+
+            claimed_mime = match.group(1) or "text/plain"
+            rest_params = match.group(2) or ""
+            data_part = match.group(3)
+
+            is_base64 = "base64" in rest_params.lower()
+
+            if is_base64:
+                try:
+                    raw_bytes = base64.b64decode(data_part, validate=True)
+                except Exception:
+                    raw_bytes = data_part.encode("utf-8", errors="replace")
+            else:
+                from urllib.parse import unquote
+
+                decoded_str = unquote(data_part)
+                raw_bytes = decoded_str.encode("utf-8", errors="replace")
+
+            actual_mime = magic.from_buffer(raw_bytes, mime=True)
+
+            sha1_hash = hashlib.sha1(raw_bytes).hexdigest()
+            sha256_hash = hashlib.sha256(raw_bytes).hexdigest()
+
+            out_filename = f"{sha256_hash}.bin"
+            out_path = os.path.join(self.output_dir, out_filename)
+            with open(out_path, "wb") as out_f:
+                out_f.write(raw_bytes)
+
+            ahash = dhash = phash = None
+            if (not self.disable_image_hashes) and actual_mime.startswith("image/"):
+                try:
+                    img = Image.open(out_path)
+                    ahash = str(imagehash.average_hash(img))
+                    dhash = str(imagehash.dhash(img))
+                    phash = str(imagehash.phash(img))
+                    img.close()
+                except Exception as e:
+                    logger.warning(f"Error calculating image hashes for {out_path}: {e}")
+
+            entry = {
+                "claimed_mime": claimed_mime,
+                "actual_mime": actual_mime,
+                "is_base64": is_base64,
+                "file_path": out_path,
+                "sha1": sha1_hash,
+                "sha256": sha256_hash,
+                "size": len(raw_bytes),
+            }
+            if ahash or dhash or phash:
+                entry["image_hashes"] = {
+                    "ahash": ahash,
+                    "dhash": dhash,
+                    "phash": phash,
+                }
+
+            data_url_entries.append(entry)
+
+        return data_url_entries, kept_urls
