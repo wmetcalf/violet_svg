@@ -410,7 +410,7 @@ class SVGAnalyzer:
 
         content = raw_bytes.decode("utf-8", errors="ignore")
         results = self.run_analysis(content)
-        original_urls = results["extracted_data"]["urls"]
+        original_urls = list(set(results["extracted_data"]["urls"]))
         data_urls_info, final_urls = self.extract_and_store_data_urls(original_urls)
         results["extracted_data"]["urls"] = final_urls
         results["data_urls"] = data_urls_info
@@ -662,7 +662,6 @@ class SVGAnalyzer:
     def extract_and_store_data_urls(self, url_list):
         data_url_entries = []
         kept_urls = []
-
         for url in url_list:
             match = data_url_pattern.match(url.strip())
             if not match:
@@ -688,9 +687,8 @@ class SVGAnalyzer:
 
             actual_mime = magic.from_buffer(raw_bytes, mime=True)
             file_type = magic.from_buffer(raw_bytes)
-
-            sha1_hash = hashlib.sha1(raw_bytes).hexdigest()
             sha256_hash = hashlib.sha256(raw_bytes).hexdigest()
+            sha1_hash = hashlib.sha1(raw_bytes).hexdigest()
             md5_hash = hashlib.md5(raw_bytes).hexdigest()
             out_filename = f"{sha256_hash}.bin"
             out_path = os.path.join(self.output_dir, out_filename)
