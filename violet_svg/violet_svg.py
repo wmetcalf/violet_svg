@@ -687,7 +687,7 @@ class SVGAnalyzer:
                 raw_bytes = decoded_str.encode("utf-8", errors="replace")
 
             actual_mime = magic.from_buffer(raw_bytes, mime=True)
-            file_type = magic.from_file(raw_bytes)
+            file_type = magic.from_buffer(raw_bytes)
 
             sha1_hash = hashlib.sha1(raw_bytes).hexdigest()
             sha256_hash = hashlib.sha256(raw_bytes).hexdigest()

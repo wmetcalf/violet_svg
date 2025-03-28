@@ -4,6 +4,7 @@ import sys
 import json
 import argparse
 import logging
+import traceback
 
 from .violet_svg import SVGAnalyzer
 
@@ -19,7 +20,8 @@ def main():
     parser.add_argument("--raw", action="store_true", help="Include raw SVG content in the JSON output")
 
     args = parser.parse_args()
-    print("""
+    print(
+        """
    ,-,--.         ,-.-.     _,---.
  ,-.'-  _\ ,--.-./=/ ,/ _.='.'-,  `
 /==/_ ,_.'/==/, ||=| -|/==.'-     /
@@ -58,7 +60,8 @@ def main():
       `--`--`  `--`-' `-`--`--`-`  `--`---' 
 
       https://www.youtube.com/watch?v=jFKWVt8-9J0
-      """)
+      """
+    )
     # Instantiate the analyzer
     analyzer = SVGAnalyzer()
     results = {}
@@ -68,6 +71,7 @@ def main():
         )
     except Exception as e:
         logger.error(f"An error occurred during analysis: {e}")
+        logger.error("{}".format(traceback.format_exc()))
         sys.exit(1)
 
     # Write the JSON results
