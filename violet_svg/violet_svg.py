@@ -88,6 +88,11 @@ regex_is_awesome["insertbefore"] = re.compile(r"(?:\x2e|\b)insertbefore\b", re.I
 regex_is_awesome["removechild"] = re.compile(r"(?:\x2e|\b)removechild\b", re.I)
 regex_is_awesome["addeventlistener"] = re.compile(r"(?:\x2e|\b)addeventlistener\b", re.I)
 regex_is_awesome["clipboardwritetext"] = re.compile(r"clipboard\s*\.\s*writetext", re.I | re.S)
+regex_is_awesome["settimeout"] = re.compile(r"\bsetTimeout\b", re.I)
+regex_is_awesome["setinterval"] = re.compile(r"\bsetInterval\b", re.I)
+regex_is_awesome["setimmediate"] = re.compile(r"\bsetImmediate\b", re.I)
+regex_is_awesome["parseint"] = re.compile(r"\bparseint\b", re.I)
+
 data_url_pattern = re.compile(r"^data:([^;]+)?(;[^,]+)?,(.*)$", re.IGNORECASE)
 cdata_tag = re.compile(r"(?is)^\s*\<\!\[CDATA\[")
 cdata_tag_end = re.compile(r"(?is)\]\]\>\s*$")
@@ -472,6 +477,7 @@ class SVGAnalyzer:
 
         results = {
             "has_script": found_script,
+            "has_on_trigger": detail_results["has_on_trigger"],
             "svg_metadata": detail_results["svg_metadata"],
             "element_presence": detail_results["element_presence"],
             "element_counts": detail_results["element_counts"],
@@ -507,7 +513,7 @@ class SVGAnalyzer:
         text_content = []
         extracted_urls = []
         extracted_scripts = []
-
+        has_on_trigger = False
         has_base64_dataurl_script_src = False
 
         root_svg = soup.find("svg")
@@ -582,6 +588,12 @@ class SVGAnalyzer:
                             script_decoded = raw_bytes.decode("utf-8", errors="replace")
                             extracted_scripts.append(script_decoded)
 
+            for attr_name, attr_value in tag.attrs.items():
+                lower_attr_name = attr_name.lower()
+                if lower_attr_name in SVG_ATTRIBUTE_CATEGORIES["events"]:
+                    extracted_scripts.append(attr_value)
+                    has_on_trigger = True
+
             for full_attr_name, attr_value in tag.attrs.items():
                 unified_attr = full_attr_name.split(":", 1)[-1].lower()
                 attr_cat = attr_to_cat.get(unified_attr, "unknown")
@@ -638,6 +650,7 @@ class SVGAnalyzer:
             "presence_hashes": presence_hashes,
             "count_hashes": count_hashes,
             "composite_hash": composite_hash,
+            "has_on_trigger": has_on_trigger,
             "has_base64_dataurl_script_src": has_base64_dataurl_script_src,
             "extracted_data": {
                 "urls": extracted_urls,
