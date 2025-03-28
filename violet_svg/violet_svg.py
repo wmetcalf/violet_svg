@@ -690,7 +690,7 @@ class SVGAnalyzer:
 
             sha1_hash = hashlib.sha1(raw_bytes).hexdigest()
             sha256_hash = hashlib.sha256(raw_bytes).hexdigest()
-
+            md5_hash = hashlib.md5(raw_bytes).hexdigest()
             out_filename = f"{sha256_hash}.bin"
             out_path = os.path.join(self.output_dir, out_filename)
             with open(out_path, "wb") as out_f:
@@ -703,6 +703,7 @@ class SVGAnalyzer:
                     ahash = str(imagehash.average_hash(img))
                     dhash = str(imagehash.dhash(img))
                     phash = str(imagehash.phash(img))
+                    chash = str(imagehash.colorhash(img, binbits=6))
                     img.close()
                 except Exception as e:
                     logger.warning(f"Error calculating image hashes for {out_path}: {e}")
@@ -714,6 +715,7 @@ class SVGAnalyzer:
                 "file_path": out_path,
                 "sha1": sha1_hash,
                 "sha256": sha256_hash,
+                "md5": md5_hash,
                 "size": len(raw_bytes),
             }
             if ahash or dhash or phash:
@@ -721,6 +723,7 @@ class SVGAnalyzer:
                     "ahash": ahash,
                     "dhash": dhash,
                     "phash": phash,
+                    "chash": chash,
                 }
 
             data_url_entries.append(entry)
