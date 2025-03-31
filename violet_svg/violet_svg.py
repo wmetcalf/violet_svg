@@ -96,6 +96,9 @@ regex_is_awesome["parseint"] = re.compile(r"\bparseint\b", re.I)
 data_url_pattern = re.compile(r"^data:([^;]+)?(;[^,]+)?,(.*)$", re.IGNORECASE)
 cdata_tag = re.compile(r"(?is)^\s*\<\!\[CDATA\[")
 cdata_tag_end = re.compile(r"(?is)\]\]\>\s*$")
+invisible_chars_re = regex.compile(r"[\p{Cf}\uFFA0\u3164]+")
+wide_svg_tag_re = re.compile(rb"<\x00?s\x00?v\x00?g", re.I)
+event_disabled = re.compile(r"(?:^\s*return\s*false|event\.preventdefault)", re.I | re.S)
 
 SVG_ELEMENT_CATEGORIES = {
     "structural": {"svg", "g", "defs", "symbol", "use", "image", "switch", "marker", "a"},
@@ -320,13 +323,6 @@ SVG_ATTRIBUTE_CATEGORIES = {
 }
 
 
-data_url_pattern = re.compile(r"^data:([^;]+)?(;[^,]+)?,(.*)$", re.IGNORECASE)
-cdata_tag = re.compile(r"(?is)^\s*\<\!\[CDATA\[")
-cdata_tag_end = re.compile(r"(?is)\]\]\>\s*$")
-invisible_chars_re = regex.compile(r"[\p{Cf}\uFFA0\u3164]+")
-wide_svg_tag_re = re.compile(rb"<\x00?s\x00?v\x00?g", re.I)
-
-
 def log_invisible_codepoints(text):
     """Collect invisible Unicode codepoints from text."""
     flags = []
@@ -499,6 +495,8 @@ class SVGAnalyzer:
             "has_iframe_in_foreignobject": has_iframe_fo,
             "has_script": found_script,
             "has_base64_dataurl_script_src": has_base64_dataurl_script_src,
+            "has_disabled_onevent": detail_results["has_disabled_onevent"],
+            "disabled_onevents": detail_results["disabled_onevents"],
             "script_features": script_features,
             "security_composite_hash": security_composite_hash,
             "security_composite_hash_dimensions": security_composite_hash_dimensions,
@@ -514,6 +512,8 @@ class SVGAnalyzer:
         extracted_urls = []
         extracted_scripts = []
         has_on_trigger = False
+        has_disabled_onevent = False
+        disabled_onevents = []
         has_base64_dataurl_script_src = False
 
         root_svg = soup.find("svg")
@@ -592,6 +592,9 @@ class SVGAnalyzer:
                 lower_attr_name = attr_name.lower()
                 if lower_attr_name in SVG_ATTRIBUTE_CATEGORIES["events"]:
                     extracted_scripts.append(attr_value)
+                    if event_disabled.search(attr_value):
+                        has_disabled_onevent = True
+                        disabled_onevents.append(lower_attr_name)
                     has_on_trigger = True
 
             for full_attr_name, attr_value in tag.attrs.items():
@@ -651,6 +654,8 @@ class SVGAnalyzer:
             "count_hashes": count_hashes,
             "composite_hash": composite_hash,
             "has_on_trigger": has_on_trigger,
+            "has_disabled_onevent": has_disabled_onevent,
+            "disabled_onevents": disabled_onevents,
             "has_base64_dataurl_script_src": has_base64_dataurl_script_src,
             "extracted_data": {
                 "urls": extracted_urls,
