@@ -385,6 +385,7 @@ class SVGAnalyzer:
         self.output_dir = None
         self.disable_image_hashes = False
         self.raw = False
+        self.is_svg_wide = False
 
     def analyze_file(self, input_path, output_dir, disable_image_hashes=False, raw=False):
 
@@ -403,6 +404,7 @@ class SVGAnalyzer:
                 if match.group(0) == b"<\x00s\x00v\x00g":
                     logger.info("found null bytes in svg tag, removing them")
                     raw_bytes = raw_bytes.replace(b"\x00", b"")
+                    self.is_svg_wide = True
 
         content = raw_bytes.decode("utf-8", errors="ignore")
         results = self.run_analysis(content)
@@ -418,7 +420,6 @@ class SVGAnalyzer:
 
     def run_analysis(self, content):
         raw_bytes = content.encode("utf-8", errors="ignore")
-        is_svg_wide = bool(wide_svg_tag_re.search(raw_bytes))
         with warnings.catch_warnings():
             warnings.filterwarnings("error", category=XMLParsedAsHTMLWarning)
             try:
@@ -453,7 +454,7 @@ class SVGAnalyzer:
             f"HAS_SCRIPT={int(found_script)}",
             f"HAS_BASE64_DATAURL_SCRIPT_SRC={int(has_base64_dataurl_script_src)}",
             f"STRUCT_COMPOSITE={detail_results['composite_hash']}",
-            f"WIDE_SVG_TAG={int(is_svg_wide)}",
+            f"WIDE_SVG_TAG={int(self.is_svg_wide)}",
             f"INVISIBLE_PRESENT={int(found_invisible_chars)}",
             f"INVISIBLE_FLAGS_HASH={invisible_flags_hash}",
             f"ONLY_SCRIPT={int(only_script)}",
@@ -482,7 +483,7 @@ class SVGAnalyzer:
             "presence_hashes": detail_results["presence_hashes"],
             "count_hashes": detail_results["count_hashes"],
             "composite_hash": detail_results["composite_hash"],
-            "is_svg_wide": is_svg_wide,
+            "is_svg_wide": self.is_svg_wide,
             "found_invisible_chars": found_invisible_chars,
             "normalized_content_length": len(normalized_content),
             "original_content_length": len(content),
