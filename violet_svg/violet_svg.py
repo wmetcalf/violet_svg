@@ -94,8 +94,10 @@ regex_is_awesome["setimmediate"] = re.compile(r"\bsetImmediate\b", re.I)
 regex_is_awesome["parseint"] = re.compile(r"\bparseint\b", re.I)
 
 data_url_pattern = re.compile(r"^data:([^;]+)?(;[^,]+)?,(.*)$", re.IGNORECASE)
-cdata_tag = re.compile(r"(?is)^\s*\<\!\[CDATA\[")
-cdata_tag_end = re.compile(r"(?is)\]\]\>\s*$")
+# Robust CDATA wrapper that handles complete and incomplete CDATA sections
+cdata_wrapper = re.compile(r"<\s*!\s*\[\s*CDATA\s*\[\s*(.*?)\s*\]\s*\]\s*>", re.DOTALL | re.IGNORECASE)
+# Fallback for incomplete CDATA (missing end tag)
+cdata_start_only = re.compile(r"<\s*!\s*\[\s*CDATA\s*\[\s*", re.IGNORECASE)
 invisible_chars_re = regex.compile(r"[\p{Cf}\uFFA0\u3164]+")
 wide_svg_tag_re = re.compile(rb"<\x00?s\x00?v\x00?g", re.I)
 event_disabled = re.compile(r"(?:^\s*return\s*false|event\.preventdefault)", re.I | re.S)
@@ -423,11 +425,14 @@ class SVGAnalyzer:
         with warnings.catch_warnings():
             warnings.filterwarnings("error", category=XMLParsedAsHTMLWarning)
             try:
-                soup = BeautifulSoup(content, "html.parser")
-                if not soup.find("svg"):
-                    soup = BeautifulSoup(content, "xml")
-            except XMLParsedAsHTMLWarning:
+                # Try XML parser first since SVG is XML (handles CDATA properly)
                 soup = BeautifulSoup(content, "xml")
+                if not soup.find("svg"):
+                    # Fallback to HTML parser if XML doesn't find SVG
+                    soup = BeautifulSoup(content, "html.parser")
+            except XMLParsedAsHTMLWarning:
+                # If XML parser has issues, fallback to HTML parser
+                soup = BeautifulSoup(content, "html.parser")
 
         invisible_flags = log_invisible_codepoints(content)
         unique_flags, counts = compress_invisible_flags(invisible_flags)
@@ -563,8 +568,14 @@ class SVGAnalyzer:
             if tag_name == "script":
                 script_text = tag.get_text(strip=True)
                 if script_text:
-                    script_text = cdata_tag.sub("", script_text)
-                    script_text = cdata_tag_end.sub("", script_text)
+                    # First try to extract content from complete CDATA wrapper
+                    cdata_matches = cdata_wrapper.findall(script_text)
+                    if cdata_matches:
+                        # Use content inside CDATA wrapper(s)
+                        script_text = '\n'.join(cdata_matches)
+                    else:
+                        # Fallback: remove incomplete CDATA start tag if present
+                        script_text = cdata_start_only.sub("", script_text)
                     extracted_scripts.append(script_text)
 
                 if "src" in tag.attrs:
