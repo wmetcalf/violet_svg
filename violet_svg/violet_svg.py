@@ -621,10 +621,12 @@ class SVGAnalyzer:
             for attr_name, attr_value in tag.attrs.items():
                 lower_attr_name = attr_name.lower()
                 if lower_attr_name in SVG_ATTRIBUTE_CATEGORIES["events"]:
-                    extracted_scripts.append(attr_value)
                     if event_disabled.search(attr_value):
                         has_disabled_onevent = True
                         disabled_onevents.append(lower_attr_name)
+                    else:
+                        # Only add non-disabled event handlers to extracted_scripts
+                        extracted_scripts.append(attr_value)
                     has_on_trigger = True
 
             for full_attr_name, attr_value in tag.attrs.items():
