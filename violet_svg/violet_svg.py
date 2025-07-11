@@ -325,6 +325,24 @@ SVG_ATTRIBUTE_CATEGORIES = {
 }
 
 
+def find_all_case_insensitive(soup, tag_name):
+    """Find all tags matching the given name, case-insensitive.
+
+    This method is more robust against evasion - it checks ALL tags in the document
+    and compares their names case-insensitively, rather than trying to guess
+    possible case variations.
+    """
+    target_name_lower = tag_name.lower()
+    found_tags = []
+
+    # Get all tags and filter by case-insensitive name comparison
+    for tag in soup.find_all():
+        if tag.name and tag.name.lower() == target_name_lower:
+            found_tags.append(tag)
+
+    return found_tags
+
+
 def log_invisible_codepoints(text):
     """Collect invisible Unicode codepoints from text."""
     flags = []
@@ -350,7 +368,7 @@ def hash_list(strings):
 
 def flag_single_script_no_others(soup):
     """Check if there's exactly one <script> and no other elements besides <svg>."""
-    scripts = soup.find_all("script")
+    scripts = find_all_case_insensitive(soup, "script")
     script_count = len(scripts)
     all_elems = soup.find_all()
     other_elems = [t for t in all_elems if t.name and t.name.lower() not in ("script", "svg")]
@@ -359,7 +377,7 @@ def flag_single_script_no_others(soup):
 
 def check_fullscreen_foreignobject(soup):
     """Return True if <foreignObject> is 100% width+height."""
-    foreign_objects = soup.find_all("foreignobject")
+    foreign_objects = find_all_case_insensitive(soup, "foreignObject")
     for fo in foreign_objects:
         w = (fo.get("width", "") or "").strip().lower()
         h = (fo.get("height", "") or "").strip().lower()
@@ -373,7 +391,7 @@ def check_fullscreen_foreignobject(soup):
 
 def check_iframe_in_foreignobject(soup):
     """Return True if <iframe> is found inside a <foreignObject>."""
-    foreign_objects = soup.find_all("foreignobject")
+    foreign_objects = find_all_case_insensitive(soup, "foreignObject")
     for fo in foreign_objects:
         if fo.find("iframe"):
             return True
@@ -531,8 +549,8 @@ class SVGAnalyzer:
             svg_metadata["version"] = root_svg.get("version")
             svg_metadata["baseProfile"] = root_svg.get("baseprofile")
 
-        for svg_el in soup.find_all("svg"):
-            for txt_node in svg_el.find_all("text"):
+        for svg_el in find_all_case_insensitive(soup, "svg"):
+            for txt_node in find_all_case_insensitive(svg_el, "text"):
                 txt_val = txt_node.get_text(" ", strip=True)
                 if txt_val:
                     text_content.append(txt_val)
@@ -572,7 +590,7 @@ class SVGAnalyzer:
                     cdata_matches = cdata_wrapper.findall(script_text)
                     if cdata_matches:
                         # Use content inside CDATA wrapper(s)
-                        script_text = '\n'.join(cdata_matches)
+                        script_text = "\n".join(cdata_matches)
                     else:
                         # Fallback: remove incomplete CDATA start tag if present
                         script_text = cdata_start_only.sub("", script_text)
@@ -622,7 +640,7 @@ class SVGAnalyzer:
                     found_in_style = re.findall(r'url\s*\(\s*["\']?([^"\')]+)', attr_value, flags=re.IGNORECASE)
                     extracted_urls.extend(found_in_style)
 
-        for style_tag in soup.find_all("style"):
+        for style_tag in find_all_case_insensitive(soup, "style"):
             style_content = style_tag.get_text()
             found_block = re.findall(r'url\s*\(\s*["\']?([^"\')]+)', style_content, flags=re.IGNORECASE)
             extracted_urls.extend(found_block)
