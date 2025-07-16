@@ -398,6 +398,21 @@ def check_iframe_in_foreignobject(soup):
     return False
 
 
+def check_remote_script_in_foreignobject(soup):
+    """Return True if remote script sources are found inside <foreignObject>."""
+    foreign_objects = find_all_case_insensitive(soup, "foreignObject")
+    for fo in foreign_objects:
+        # Look for script tags with src attributes
+        scripts = find_all_case_insensitive(fo, "script")
+        for script in scripts:
+            src = script.get("src", "").strip()
+            if src:
+                # Check if it's a remote URL (starts with http:// or https://)
+                if src.lower().startswith(("http://", "https://")):
+                    return True
+    return False
+
+
 class SVGAnalyzer:
 
     def __init__(self):
@@ -461,6 +476,7 @@ class SVGAnalyzer:
         only_script = flag_single_script_no_others(soup)
         has_fullscreen_fo = check_fullscreen_foreignobject(soup)
         has_iframe_fo = check_iframe_in_foreignobject(soup)
+        has_remote_script_fo = check_remote_script_in_foreignobject(soup)
         detail_results = self._analyze_svg_security(soup)
         has_base64_dataurl_script_src = detail_results["has_base64_dataurl_script_src"]
         found_script = bool(detail_results["extracted_data"]["scripts"])
@@ -517,6 +533,7 @@ class SVGAnalyzer:
             "only_script": only_script,
             "has_fullscreen_foreignobject": has_fullscreen_fo,
             "has_iframe_in_foreignobject": has_iframe_fo,
+            "has_remote_script_in_foreignobject": has_remote_script_fo,
             "has_script": found_script,
             "has_base64_dataurl_script_src": has_base64_dataurl_script_src,
             "has_disabled_onevent": detail_results["has_disabled_onevent"],
