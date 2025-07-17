@@ -413,8 +413,79 @@ def check_remote_script_in_foreignobject(soup):
     return False
 
 
-class SVGAnalyzer:
+def check_hidden_foreignobject(soup):
+    """Return True if hidden <foreignObject> is found (zero width/height or hidden overflow)."""
+    foreign_objects = find_all_case_insensitive(soup, "foreignObject")
+    for fo in foreign_objects:
+        # Check for zero width or height
+        w = (fo.get("width", "") or "").strip().lower()
+        h = (fo.get("height", "") or "").strip().lower()
+        if w == "0" or h == "0" or w == "0px" or h == "0px":
+            return True
 
+        # Check for hidden overflow
+        overflow = (fo.get("overflow", "") or "").strip().lower()
+        if overflow == "hidden":
+            return True
+
+        # Check if hidden via style attribute
+        style_attr = (fo.get("style", "") or "").lower()
+        if any(hidden_prop in style_attr for hidden_prop in ["width:0", "height:0", "visibility:hidden", "display:none", "overflow:hidden"]):
+            return True
+
+        # Check if positioned offscreen
+        x = (fo.get("x", "") or "").strip().lower()
+        y = (fo.get("y", "") or "").strip().lower()
+        if any(coord.startswith("-") for coord in [x, y]):
+            return True
+
+    return False
+
+
+def check_script_in_hidden_foreignobject(soup):
+    """Return True if <script> tags are found inside hidden <foreignObject> elements."""
+    foreign_objects = find_all_case_insensitive(soup, "foreignObject")
+    for fo in foreign_objects:
+        # First check if this foreignObject is hidden
+        is_hidden = False
+
+        # Check for zero width or height
+        w = (fo.get("width", "") or "").strip().lower()
+        h = (fo.get("height", "") or "").strip().lower()
+        if w == "0" or h == "0" or w == "0px" or h == "0px":
+            is_hidden = True
+
+        # Check for hidden overflow
+        if not is_hidden:
+            overflow = (fo.get("overflow", "") or "").strip().lower()
+            if overflow == "hidden":
+                is_hidden = True
+
+        # Check if hidden via style attribute
+        if not is_hidden:
+            style_attr = (fo.get("style", "") or "").lower()
+            if any(
+                hidden_prop in style_attr for hidden_prop in ["width:0", "height:0", "visibility:hidden", "display:none", "overflow:hidden"]
+            ):
+                is_hidden = True
+
+        # Check if positioned offscreen
+        if not is_hidden:
+            x = (fo.get("x", "") or "").strip().lower()
+            y = (fo.get("y", "") or "").strip().lower()
+            if any(coord.startswith("-") for coord in [x, y]):
+                is_hidden = True
+
+        # If this foreignObject is hidden, check for script tags inside it
+        if is_hidden:
+            scripts = find_all_case_insensitive(fo, "script")
+            if scripts:
+                return True
+
+    return False
+
+
+class SVGAnalyzer:
     def __init__(self):
         self.input_path = None
         self.output_dir = None
@@ -423,7 +494,6 @@ class SVGAnalyzer:
         self.is_svg_wide = False
 
     def analyze_file(self, input_path, output_dir, disable_image_hashes=False, raw=False):
-
         self.input_path = input_path
         self.output_dir = output_dir
         self.disable_image_hashes = disable_image_hashes
@@ -477,6 +547,8 @@ class SVGAnalyzer:
         has_fullscreen_fo = check_fullscreen_foreignobject(soup)
         has_iframe_fo = check_iframe_in_foreignobject(soup)
         has_remote_script_fo = check_remote_script_in_foreignobject(soup)
+        has_hidden_fo = check_hidden_foreignobject(soup)
+        has_script_in_hidden_fo = check_script_in_hidden_foreignobject(soup)
         detail_results = self._analyze_svg_security(soup)
         has_base64_dataurl_script_src = detail_results["has_base64_dataurl_script_src"]
         found_script = bool(detail_results["extracted_data"]["scripts"])
@@ -534,6 +606,8 @@ class SVGAnalyzer:
             "has_fullscreen_foreignobject": has_fullscreen_fo,
             "has_iframe_in_foreignobject": has_iframe_fo,
             "has_remote_script_in_foreignobject": has_remote_script_fo,
+            "has_hidden_foreignobject": has_hidden_fo,
+            "has_script_in_hidden_foreignobject": has_script_in_hidden_fo,
             "has_script": found_script,
             "has_base64_dataurl_script_src": has_base64_dataurl_script_src,
             "has_disabled_onevent": detail_results["has_disabled_onevent"],
