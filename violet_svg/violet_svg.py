@@ -687,8 +687,14 @@ class SVGAnalyzer:
                         script_text = cdata_start_only.sub("", script_text)
                     extracted_scripts.append(script_text)
 
+                # Check for script sources in both src and xlink:href attributes
+                script_src = None
                 if "src" in tag.attrs:
                     script_src = tag["src"]
+                elif "xlink:href" in tag.attrs:
+                    script_src = tag["xlink:href"]
+
+                if script_src:
                     extracted_urls.append(script_src)
 
                     m = data_url_pattern.match(script_src.strip())
@@ -726,8 +732,10 @@ class SVGAnalyzer:
                 attribute_presence[attr_cat].add(unified_attr)
                 attribute_counts[attr_cat][unified_attr] += 1
 
-                if unified_attr in possible_url_attrs and tag_name != "script":
-                    extracted_urls.append(attr_value)
+                if unified_attr in possible_url_attrs:
+                    # For script tags, we handle src/xlink:href separately above
+                    if tag_name != "script":
+                        extracted_urls.append(attr_value)
 
                 if unified_attr == "style":
                     found_in_style = re.findall(r'url\s*\(\s*["\']?([^"\')]+)', attr_value, flags=re.IGNORECASE)
