@@ -705,8 +705,13 @@ class SVGAnalyzer:
                             has_base64_dataurl_script_src = True
                             try:
                                 raw_bytes = base64.b64decode(data_part, validate=True)
-                            except Exception:
-                                raw_bytes = data_part.encode("utf-8", errors="replace")
+                            except Exception as e:
+                                # Try with padding if needed
+                                try:
+                                    padded_data = data_part + '=' * (4 - len(data_part) % 4) if len(data_part) % 4 else data_part
+                                    raw_bytes = base64.b64decode(padded_data, validate=True)
+                                except Exception:
+                                    raw_bytes = data_part.encode("utf-8", errors="replace")
                             try:
                                 if b"\x00" in raw_bytes:
                                     raw_bytes = base64.b64decode(raw_bytes).decode("UTF-16")
