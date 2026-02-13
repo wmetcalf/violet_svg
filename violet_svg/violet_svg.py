@@ -518,6 +518,21 @@ class SVGAnalyzer:
         results["extracted_data"]["urls"] = final_urls
         results["data_urls"] = data_urls_info
 
+        if results["extracted_data"]["scripts"]:
+            dom_elements = results.get("dom_elements", [])
+            dom_js = self._generate_dom_element_js(dom_elements)
+            joined_scripts = "\n".join(results["extracted_data"]["scripts"])
+            combined = dom_js + "\n" + joined_scripts
+            results["extracted_data"]["extracted_script"] = combined
+
+            # Write combined script to output dir
+            script_path = os.path.join(self.output_dir, "extracted_script.js")
+            with open(script_path, "w", encoding="utf-8") as f:
+                f.write(combined)
+            logger.info(f"Wrote combined box-js script to: {script_path}")
+
+        results.pop("dom_elements", None)
+
         if self.raw:
             results["raw_content"] = content
 
@@ -617,6 +632,7 @@ class SVGAnalyzer:
             "security_composite_hash_dimensions": security_composite_hash_dimensions,
             "security_composite_hash_script_features_v1": security_composite_hash_script_features_v1,
             "extracted_data": detail_results["extracted_data"],
+            "dom_elements": detail_results.get("dom_elements", []),
         }
 
         return results
@@ -630,6 +646,7 @@ class SVGAnalyzer:
         has_disabled_onevent = False
         disabled_onevents = []
         has_base64_dataurl_script_src = False
+        dom_elements = []
 
         root_svg = soup.find("svg")
         if root_svg:
@@ -673,6 +690,22 @@ class SVGAnalyzer:
             cat = elem_to_cat.get(tag_name, "unknown")
             element_presence[cat].add(tag_name)
             element_counts[cat][tag_name] += 1
+
+            if tag_name != "script" and tag_name != "[document]":
+                elem_id = tag.attrs.get("id")
+                elem_text = tag.get_text(" ", strip=True)
+                elem_attrs = {}
+                for attr_name, attr_value in tag.attrs.items():
+                    if isinstance(attr_value, list):
+                        elem_attrs[attr_name] = " ".join(attr_value)
+                    else:
+                        elem_attrs[attr_name] = str(attr_value)
+                dom_elements.append({
+                    "tag_name": tag_name,
+                    "id": elem_id,
+                    "text_content": elem_text,
+                    "attrs": elem_attrs,
+                })
 
             if tag_name == "script":
                 script_text = tag.get_text(strip=True)
@@ -798,7 +831,44 @@ class SVGAnalyzer:
                 "scripts": extracted_scripts,
                 "text": text_content,
             },
+            "dom_elements": dom_elements,
         }
+
+    def _generate_dom_element_js(self, dom_elements):
+        """Generate box-js compatible JS declarations for SVG DOM elements.
+
+        Produces var ids, data, attrs (for getElementById) and
+        var tagNameMap (for getElementsByTagName) matching the format
+        expected by box-js boilerplate.js.
+        """
+        ids_arrays = []
+        data_arrays = []
+        attrs_dicts = []
+        tag_name_map = {}
+
+        for elem in dom_elements:
+            tag = elem["tag_name"]
+            text = elem["text_content"]
+
+            # Collect for tagNameMap (all elements, grouped by tag)
+            if tag not in tag_name_map:
+                tag_name_map[tag] = []
+            tag_name_map[tag].append(text)
+
+            # Collect for ids/data/attrs (only elements with an id)
+            elem_id = elem["id"]
+            if elem_id:
+                ids_arrays.append([ord(c) for c in elem_id])
+                data_arrays.append([ord(c) for c in text])
+                attrs_dicts.append(elem["attrs"])
+
+        lines = []
+        lines.append("var ids = " + json.dumps(ids_arrays) + ";")
+        lines.append("var data = " + json.dumps(data_arrays) + ";")
+        lines.append("var attrs = " + json.dumps(attrs_dicts) + ";")
+        lines.append("var tagNameMap = " + json.dumps(tag_name_map) + ";")
+
+        return "\n".join(lines)
 
     def extract_and_store_data_urls(self, url_list):
         data_url_entries = []

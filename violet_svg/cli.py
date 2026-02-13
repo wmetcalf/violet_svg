@@ -18,7 +18,6 @@ def main():
     parser.add_argument("-d", "--dir", required=True, help="Directory to store output & extracted payloads")
     parser.add_argument("--disable-image-hashes", action="store_true", help="Skip image hashing for data: images")
     parser.add_argument("--raw", action="store_true", help="Include raw SVG content in the JSON output")
-
     args = parser.parse_args()
     print(
         """
