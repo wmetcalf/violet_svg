@@ -18,6 +18,8 @@ def main():
     parser.add_argument("-d", "--dir", required=True, help="Directory to store output & extracted payloads")
     parser.add_argument("--disable-image-hashes", action="store_true", help="Skip image hashing for data: images")
     parser.add_argument("--raw", action="store_true", help="Include raw SVG content in the JSON output")
+    parser.add_argument("--boxjs-path", default=None, help="Path to box-js binary to automatically run box-js on reconstructed scripts")
+    parser.add_argument("--boxjs-timeout", type=int, default=20, help="Timeout in seconds for box-js script execution (default: 20)")
     args = parser.parse_args()
     print(
         """
@@ -66,7 +68,9 @@ def main():
     results = {}
     try:
         results = analyzer.analyze_file(
-            input_path=args.input, output_dir=args.dir, disable_image_hashes=args.disable_image_hashes, raw=args.raw
+            input_path=args.input, output_dir=args.dir, disable_image_hashes=args.disable_image_hashes, raw=args.raw,
+            boxjs_path=args.boxjs_path,
+            boxjs_timeout=args.boxjs_timeout
         )
     except Exception as e:
         logger.error(f"An error occurred during analysis: {e}")

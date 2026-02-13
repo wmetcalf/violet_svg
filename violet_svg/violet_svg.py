@@ -7,6 +7,8 @@ import copy
 import json
 import hashlib
 import logging
+import subprocess
+import glob
 import regex
 from collections import Counter
 
@@ -493,11 +495,13 @@ class SVGAnalyzer:
         self.raw = False
         self.is_svg_wide = False
 
-    def analyze_file(self, input_path, output_dir, disable_image_hashes=False, raw=False):
+    def analyze_file(self, input_path, output_dir, disable_image_hashes=False, raw=False, boxjs_path=None, boxjs_timeout=20):
         self.input_path = input_path
         self.output_dir = output_dir
         self.disable_image_hashes = disable_image_hashes
         self.raw = raw
+        self.boxjs_path = boxjs_path
+        self.boxjs_timeout = boxjs_timeout
 
         os.makedirs(self.output_dir, exist_ok=True)
 
@@ -523,13 +527,18 @@ class SVGAnalyzer:
             dom_js = self._generate_dom_element_js(dom_elements)
             joined_scripts = "\n".join(results["extracted_data"]["scripts"])
             combined = dom_js + "\n" + joined_scripts
-            results["extracted_data"]["extracted_script"] = combined
+            results["extracted_data"]["reconstructed_script"] = combined
 
             # Write combined script to output dir
-            script_path = os.path.join(self.output_dir, "extracted_script.js")
+            script_path = os.path.join(self.output_dir, "reconstructed_script.js")
             with open(script_path, "w", encoding="utf-8") as f:
                 f.write(combined)
             logger.info(f"Wrote combined box-js script to: {script_path}")
+
+            # Run box-js if path provided
+            if self.boxjs_path:
+                boxjs_results = self._run_boxjs(script_path)
+                results["boxjs_results"] = boxjs_results
 
         results.pop("dom_elements", None)
 
@@ -869,6 +878,90 @@ class SVGAnalyzer:
         lines.append("var tagNameMap = " + json.dumps(tag_name_map) + ";")
 
         return "\n".join(lines)
+
+    def _run_boxjs(self, script_path):
+        """Run box-js on the given script and return parsed results.
+
+        Returns a dict with 'iocs', 'urls', and 'output_dir' on success,
+        or 'error' on failure.
+        """
+        boxjs_out = os.path.join(self.output_dir, "box_js_out")
+        os.makedirs(boxjs_out, exist_ok=True)
+
+        cmd = [
+            self.boxjs_path, script_path,
+            f"--output-dir={boxjs_out}",
+            "--prepended-code=default",
+            "--fake-download",
+            "--encoding=utf8",
+            "--preprocess",
+            "--rewrite-loops",
+            "--activex-as-ioc",
+            "--no-kill",
+            "--no-shell-error",
+            f"--timeout={self.boxjs_timeout}",
+            "--loglevel=debug",
+            "--extract-conditional-code",
+            "--ignore-wscript.quit",
+        ]
+
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=self.boxjs_timeout + 30,
+            )
+            logger.info(f"box-js stdout:\n{result.stdout}")
+            if result.stderr:
+                logger.debug(f"box-js stderr:\n{result.stderr}")
+        except subprocess.TimeoutExpired:
+            logger.error(f"box-js timed out after {self.boxjs_timeout + 30} seconds")
+            return {"error": f"box-js timed out after {self.boxjs_timeout + 30} seconds"}
+        except FileNotFoundError:
+            logger.error(f"box-js binary not found at {self.boxjs_path}")
+            return {"error": f"box-js binary not found at {self.boxjs_path}"}
+        except Exception as e:
+            logger.error(f"box-js execution failed: {e}")
+            return {"error": str(e)}
+
+        # Find the .results directory — box-js creates {filename}.results/
+        # and appends .1.results, .2.results, etc. on reruns
+        script_basename = os.path.basename(script_path)
+        results_pattern = os.path.join(boxjs_out, f"{script_basename}*.results")
+        results_dirs = sorted(glob.glob(results_pattern))
+
+        if not results_dirs:
+            logger.warning("box-js produced no .results directory")
+            return {"error": "no .results directory produced"}
+
+        results_dir = results_dirs[-1]  # most recent
+
+        boxjs_results = {
+            "iocs": [],
+            "urls": [],
+            "output_dir": results_dir,
+        }
+
+        # Parse IOC.json
+        ioc_path = os.path.join(results_dir, "IOC.json")
+        if os.path.exists(ioc_path):
+            try:
+                with open(ioc_path, "r", encoding="utf-8") as f:
+                    boxjs_results["iocs"] = json.load(f)
+            except Exception as e:
+                logger.warning(f"Failed to parse IOC.json: {e}")
+
+        # Parse urls.json
+        urls_path = os.path.join(results_dir, "urls.json")
+        if os.path.exists(urls_path):
+            try:
+                with open(urls_path, "r", encoding="utf-8") as f:
+                    boxjs_results["urls"] = json.load(f)
+            except Exception as e:
+                logger.warning(f"Failed to parse urls.json: {e}")
+
+        return boxjs_results
 
     def extract_and_store_data_urls(self, url_list):
         data_url_entries = []
