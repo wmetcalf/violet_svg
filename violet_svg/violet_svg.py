@@ -538,6 +538,24 @@ class SVGAnalyzer:
             # Run box-js if path provided
             if self.boxjs_path:
                 boxjs_results = self._run_boxjs(script_path)
+
+                # Check if box-js produced meaningful IOCs
+                boxjs_has_results = self._boxjs_has_meaningful_iocs(boxjs_results)
+
+                if not boxjs_has_results:
+                    # Static URL extraction fallback
+                    static_urls = self._extract_urls_from_script(combined)
+                    if static_urls:
+                        boxjs_results["static_script_urls"] = static_urls
+                        logger.info(f"Static URL extraction found {len(static_urls)} URLs in script")
+
+                    # Promote remote script URLs when box-js found nothing
+                    if results.get("has_remote_script_in_foreignobject"):
+                        remote_urls = results["extracted_data"].get("urls", [])
+                        if remote_urls:
+                            boxjs_results["remote_script_urls"] = remote_urls
+                            logger.info(f"Promoted {len(remote_urls)} remote script URLs as IOCs")
+
                 results["boxjs_results"] = boxjs_results
 
         results.pop("dom_elements", None)
@@ -878,6 +896,35 @@ class SVGAnalyzer:
         lines.append("var tagNameMap = " + json.dumps(tag_name_map) + ";")
 
         return "\n".join(lines)
+
+    @staticmethod
+    def _boxjs_has_meaningful_iocs(boxjs_results):
+        """Check whether box-js produced IOCs beyond the default Sample Name."""
+        if boxjs_results.get("error"):
+            return False
+        iocs = boxjs_results.get("iocs", [])
+        meaningful = [i for i in iocs if i.get("type") != "Sample Name"]
+        if meaningful:
+            return True
+        urls = boxjs_results.get("urls", [])
+        if urls:
+            return True
+        return False
+
+    @staticmethod
+    def _extract_urls_from_script(script_content):
+        """Extract URLs from script content via regex as a fallback when
+        box-js dynamic analysis fails."""
+        url_re = re.compile(r'https?://[^\s\x22\x27`<>\\\x29\x5d]+')
+        matches = url_re.findall(script_content)
+        seen = set()
+        urls = []
+        for url in matches:
+            url = url.rstrip(".,;:!?)")
+            if url not in seen:
+                seen.add(url)
+                urls.append(url)
+        return urls
 
     def _run_boxjs(self, script_path):
         """Run box-js on the given script and return parsed results.
