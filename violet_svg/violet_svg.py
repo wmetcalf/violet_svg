@@ -495,13 +495,15 @@ class SVGAnalyzer:
         self.raw = False
         self.is_svg_wide = False
 
-    def analyze_file(self, input_path, output_dir, disable_image_hashes=False, raw=False, boxjs_path=None, boxjs_timeout=20):
+    def analyze_file(self, input_path, output_dir, disable_image_hashes=False, raw=False, boxjs_path=None, boxjs_timeout=25, boxjs_strip_timeout=5, boxjs_preprocess_timeout=10):
         self.input_path = input_path
         self.output_dir = output_dir
         self.disable_image_hashes = disable_image_hashes
         self.raw = raw
         self.boxjs_path = boxjs_path
         self.boxjs_timeout = boxjs_timeout
+        self.boxjs_strip_timeout = boxjs_strip_timeout
+        self.boxjs_preprocess_timeout = boxjs_preprocess_timeout
 
         os.makedirs(self.output_dir, exist_ok=True)
 
@@ -947,24 +949,28 @@ class SVGAnalyzer:
             "--no-kill",
             "--no-shell-error",
             f"--timeout={self.boxjs_timeout}",
+            f"--strip-timeout={self.boxjs_strip_timeout}",
+            f"--preprocess-timeout={self.boxjs_preprocess_timeout}",
             "--loglevel=debug",
             "--extract-conditional-code",
             "--ignore-wscript.quit",
         ]
 
+        # Wrapper timeout = sum of all 3 box-js timeouts + 5s headroom
+        wrapper_timeout = self.boxjs_strip_timeout + self.boxjs_preprocess_timeout + self.boxjs_timeout + 5
         try:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=self.boxjs_timeout + 30,
+                timeout=wrapper_timeout,
             )
             logger.info(f"box-js stdout:\n{result.stdout}")
             if result.stderr:
                 logger.debug(f"box-js stderr:\n{result.stderr}")
         except subprocess.TimeoutExpired:
-            logger.error(f"box-js timed out after {self.boxjs_timeout + 30} seconds")
-            return {"error": f"box-js timed out after {self.boxjs_timeout + 30} seconds"}
+            logger.error(f"box-js timed out after {wrapper_timeout} seconds")
+            return {"error": f"box-js timed out after {wrapper_timeout} seconds"}
         except FileNotFoundError:
             logger.error(f"box-js binary not found at {self.boxjs_path}")
             return {"error": f"box-js binary not found at {self.boxjs_path}"}
