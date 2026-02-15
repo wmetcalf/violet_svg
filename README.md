@@ -833,7 +833,29 @@ coz@genesis:~/violet_svg$ cat datadump/dump.json | jq
     }
   ]
 }
-coz@genesis:~/violet_svg$ 
+coz@genesis:~/violet_svg$
 
 
 ```
+
+# box-js Integration
+
+violet_svg can automatically run extracted JavaScript through [box-js](https://github.com/wmetcalf/box-js) for dynamic analysis of malicious scripts embedded in SVGs.
+
+```
+violet_svg -i malicious.svg -d output/ -o results.json --boxjs-path /usr/local/bin/box-js
+```
+
+Timeout options for box-js analysis:
+
+```
+violet_svg -i malicious.svg -d output/ -o results.json \
+    --boxjs-path /usr/local/bin/box-js \
+    --boxjs-strip-timeout 5 \
+    --boxjs-preprocess-timeout 10 \
+    --boxjs-timeout 25
+```
+
+- `--boxjs-strip-timeout` — comment stripping timeout in seconds (default: 5)
+- `--boxjs-preprocess-timeout` — uglify-es preprocessing timeout in seconds (default: 10)
+- `--boxjs-timeout` — script execution timeout in seconds (default: 25)
