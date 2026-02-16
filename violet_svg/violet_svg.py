@@ -9,6 +9,7 @@ import hashlib
 import logging
 import subprocess
 import glob
+import shutil
 import regex
 from collections import Counter
 
@@ -506,6 +507,15 @@ class SVGAnalyzer:
         self.boxjs_preprocess_timeout = boxjs_preprocess_timeout
 
         os.makedirs(self.output_dir, exist_ok=True)
+
+        # Clean stale output from previous runs
+        boxjs_out = os.path.join(self.output_dir, "box_js_out")
+        if os.path.isdir(boxjs_out):
+            shutil.rmtree(boxjs_out)
+        extracted_dir = os.path.join(self.output_dir, "violet_svg_files")
+        if os.path.isdir(extracted_dir):
+            shutil.rmtree(extracted_dir)
+        os.makedirs(extracted_dir, exist_ok=True)
 
         with open(self.input_path, "rb") as f:
             raw_bytes = f.read()
@@ -1048,7 +1058,7 @@ class SVGAnalyzer:
             sha1_hash = hashlib.sha1(raw_bytes).hexdigest()
             md5_hash = hashlib.md5(raw_bytes).hexdigest()
             out_filename = f"{sha256_hash}.bin"
-            out_path = os.path.join(self.output_dir, out_filename)
+            out_path = os.path.join(self.output_dir, "violet_svg_files", out_filename)
             with open(out_path, "wb") as out_f:
                 out_f.write(raw_bytes)
 
